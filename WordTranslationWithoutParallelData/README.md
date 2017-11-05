@@ -5,7 +5,7 @@ As a first step towards fully unsupervised machine translation, this paper demon
 
 This work is built on [Mikolov, 2013] showing that it is possible exploit the similarities of monolingual embedding spaces to a mapping between monolingual embeddings. Using supervised approach, [Mikolov, 2013] successfully shows that a simple linear mapping *W* gives good result for this mapping. In addition, [Xing, 2015] show that such mapping can be improved by enforcing an orthogonality constraint on *W*.
 
-Based on that starting point, the work described in the paper show that it is possible to learn and refine such a mapping with a fully unsupervized approach using adversarial learning. It is based on the following process:
+Based on that starting point, the work described in the paper show that it is possible to learn and refine such a mapping with a fully unsupervized approach using adversarial learning. It is based on the following process (figure extracted from the paper):
 
 ![Overview](./img/overview.png)
 
