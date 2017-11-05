@@ -147,7 +147,7 @@ The 10k first entries of the dictionary with are dumped at the last epoch.
 The option `--load file` and `--save file`, can be used to save and reload the generator state.
 
 ## Some results
-* 10k first English-French entries are provided [here](./sample.md) - corresponding to a score of 62.04 (vs. 77.8 in the paper but using their own dictionary)
+* 10k first English-French entries are provided [here](./sample.md) - corresponding to a score of 62.04 (vs. 77.8 in the paper but using the authors own dictionary)
 * Unsupervized model selection: as shown in Figure 2 of the paper, the highest precision (evaluated on reference dictionary) is also corresponding to minimal average CSLS score over the first 10k entries - here at the epoch 59:
 ![Unsupervized Validation vs. Precision](./img/validation-precision.png)
 * For the same run, the following graph shows the evolution of the generator loss, of the discriminator loss, and of the (unsupervized) validation score. It is interesting to see that the discrimator loss decreases continuously till epoch 43 then struggle to keep position while generator loss decreases. In this run, a continuous decay rate of 0.99 was used, and no halving of the learning rate done. Also - learning rates of generator and discriminator are the same. It could be interesting to investigate other strategies. 
