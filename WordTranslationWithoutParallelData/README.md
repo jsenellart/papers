@@ -88,10 +88,8 @@ A luatorch version is also provided - it includes the adversarial training, and 
 ### Running it
 * Get fasttext word embeddings
 ```
-wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.en.vec
-wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.fr.vec
-...
-wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.ko.vec
+wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.en.vec ;
+wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.fr.vec 
 ```
 
 * Train a model:
