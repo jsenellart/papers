@@ -41,7 +41,7 @@ Sequential (
 ```
 * Loss function is Binary Cross Entropy measure (`BCELoss`)
 
-it would be possible to consider a two cell output - and use a softmax layer, but I think this approach is far simpler.
+it would be possible to consider a two cell output - and use a softmax layer, but I think this approach is simpler.
 
 ### Extracting source-target pairs
 * Fast nearest neighbors is implemented using Facebook FAISS library [Johnson 2017] - using python binding 
@@ -51,10 +51,11 @@ it would be possible to consider a two cell output - and use a softmax layer, bu
 ### Evaluation
 An internal EN-FR dictionary is provided and can be used for evaluation with the `--evalDict` option. Note: this is note the dictionary used by the authors but it gives same type of results.
 
-The provided dictionary has multiple meanings for each simple word, so for the calculation of the precision, I just give credit if one hypothesis matches one of the available meaning.
-Note that the dictionary does not contain inflected form, so the score is under-evaluated since the proposed meaning might be available but in lemmatized form. Also source words missing from the evaluation dictionary are not taken into account.
+The provided dictionary has multiple meanings for each simple word, so for the calculation of the precision, I just give credit if one hypothesis matches one of the available meanings.
 
-For instance - the first entry below is ignored since `men` is not part of the reference dictionary, and the second is considered as wrong because `peut` would normally count in P@5 but is in inflected form.
+Note that the dictionary does not contain inflected form, so the score is under-evaluated since the proposed meaning might be available but in lemmatized form. Also source words missing from the evaluation dictionary are not taken into account. This could be improved using inflected form dictionary and/or stemming but my goal was just to validate the approach.
+
+For instance - the first entry below corresponding a correctly hypothetized tranlsation for the word `men`, is ignored since `men` is not part of the reference dictionary, and the second is considered as wrong because `peut` would normally count in P@5 but is the inflected form of `pouvoir` so not validated by the dictionary.
 
 ```
 men hommes      eux     les     enfin   ,       alors   que     ainsi   même    pourtant
@@ -65,24 +66,24 @@ can éventuellement      eventuellement  faut    peut    sinon   exemple sachant
 
 ### Adversarial Training
 For adversarial training, the process described in [Goodfellow, 2014] as been implemented:
-* first, k-steps of discriminator update using *batchSize* projected source example, and *batchSize* native target. As suggested, we use label smoothing for calculating the loss of the native target.
+* first, k-steps of discriminator update using *m=batchSize* projected source example, and *m=batchSize* native target. As suggested, I use label smoothing for calculating the loss of the native target.
 * then, one mini-batch update of the generator is done propagating gradient from the discriminator with inverse loss function.
 
 ### Refinement
 Refinement Procedure as described in 2.2 is not yet implemented
 
-## Use the script
+## Using the script
 
 ### Dependency
 
 * `pytorch`
 * `scipy`
-* `progressbar`
+* `progressbar2`
 * `FAISS` (more tricky to install)
 
 GPU can be used if available with `--gpuid ID` option in the script. 
 
-A luatorch version is also available - it includes the adversarial training, and the (non efficient) nearest neighbors extraction.
+A luatorch version is also provided - it includes the adversarial training, and the (non optimized) nearest neighbors extraction.
 
 ### Running it
 * Get fasttext word embeddings
@@ -157,14 +158,15 @@ The option `--load file` and `--save file`, can be used to save and reload the g
 
 
 ## Personal comments and Discussions
-* Even without the refinment implementation, the results are as good as promised by the paper: without any bilingual knowledge, it is possible to build a relatively accurate word translation table. We could argue that since the word embeddings have been trained on wikipedia (see [fasttext](https://github.com/facebookresearch/fastText), there is some implicit aligned knowledge that is necessarily reflected in the embeddings - leading to these results. Still it is still a wonder that multilingual word embeddings can be aligned like this, and with such a simple transformation. It would be interesting to test with other embeddings built on different sources of data.
+* Even without the refinment implementation, the results are as good as promised by the paper: without any bilingual knowledge, it is possible to build a relatively accurate word translation table. We could argue that since the word embeddings have been trained on wikipedia (see [fasttext](https://github.com/facebookresearch/fastText), there is some implicit _aligned knowledge_ that is necessarily reflected in the embeddings - leading to these results. Still it is still a wonder that multilingual word embeddings can be aligned like this, and with such a simple transformation. It would be interesting to test with other embeddings built on different sources of data. The experiments from the authors showing that even on a same language, we cannot align so easily wikipedia-trained word embedding and gigaword-trained word embedding is also confirming this intuition. So probably, the usage of this method is optimal for comparable corpora.
 
 There are some limits in the extraction:
 
-* The mapping can not really deal with polysemy, since all meanings for a source word will necessarily be in the same "neighborhood". This is also the very nature of these word embeddings forcing multiple meanings to share single representations. It could be interesting to see what would happen with adaptive skip-gram word vectors...
-* Also, beyond polysemy and contextual mappings, what is also really missing is the notion multi-word expression which are critical for a human perspective.
+* The mapping can not really deal with polysemy, since all meanings for a source word will necessarily be in the same "neighborhood". This is not a problem of the approach, but this is the very nature of these word embeddings forcing multiple meanings to share single representations. It could be interesting to see what would happen with adaptive skip-gram word vectors...
+* Also, beyond polysemy and contextual mappings, what is also really missing is the notion multi-word expression which are critical for a human perspective and building of a translation lexicon.
 
-If we think about the potential usage of this work, it is clearly not directly usable to build word translation table: for most language pairs, such resource is already available and without all the limitations faced with this approach, on the other hand quality for rarer language pairs is far lower and would be challenged very quickly by any traditional (human) resource building process.
-However, the findings and implications of this work are a huge step forward better understanding of word embedding and knowledge representation, and this work is the _apetizer_ for the the main course - also published by facebook research team: *Unsupervised Machine Translation Using Monolingual Corpora Only*...
+If we think about the potential usage of this work, it is clearly not directly usable to build human-ready word translation table: for most language pairs, such resource is already available with higher quality and without all the limitations faced with this approach, on the other hand quality for rarer language pairs,the quality is far lower and would be challenged very quickly by any traditional (human) resource building process.
+
+However, the findings and implications of this work are a huge step forward better understanding of word embedding and knowledge representation, and this work is clearly the _apetizer_ for the the main course - also published by facebook research team - *Unsupervised Machine Translation Using Monolingual Corpora Only*...
 
 Keep tuned...
