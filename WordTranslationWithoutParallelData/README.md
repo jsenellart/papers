@@ -44,7 +44,7 @@ Sequential (
 it would be possible to consider a two cell output - and use a softmax layer, but I think this approach is simpler.
 
 ### Extracting source-target pairs
-* Fast nearest neighbors is implemented using Facebook FAISS library [Johnson 2017] - using python binding 
+* Fast nearest neighbors is implemented using Facebook FAISS library [Johnson 2017] - using python binding
 * To calculate Cross-Domain Similarity Local Scaling (CSLS) - as defined in section 2.3 - the value \( r_S(y_t) \) is pre-calculated for the full target-dictionary. The results of FAISS `search` are rescored using the CSLS metrics
 * !!note!! - I only implemented one-way CSLS. In 3.4, it is also mentioned that the mutual nearest neighbor are also considered to restrict the list of candidates.
 
@@ -69,6 +69,12 @@ For adversarial training, the process described in [Goodfellow, 2014] as been im
 * first, k-steps of discriminator update using *m=batchSize* projected source example, and *m=batchSize* native target. As suggested, I use label smoothing for calculating the loss of the native target.
 * then, one mini-batch update of the generator is done propagating gradient from the discriminator with inverse loss function.
 
+## Unsupervised Model Selection and decay/early stopping strategy
+* average CSLS on first 10k is used as validation criterion (3.5)
+* for each epoch, `-decayRate` is applied on learning rate
+* if validation score is going up for 2 epochs with relative increase larger than twice `--halfDecayTreshold` parameter, the learning rate is divided by 2
+* when learning rate reaches 1/20 of initial learning rate, the training stops
+
 ### Refinement
 Refinement Procedure as described in 2.2 is not yet implemented
 
@@ -81,7 +87,7 @@ Refinement Procedure as described in 2.2 is not yet implemented
 * `progressbar2`
 * `FAISS` (more tricky to install)
 
-GPU can be used if available with `--gpuid ID` option in the script. 
+GPU can be used if available with `--gpuid ID` option in the script.
 
 A luatorch version is also provided - it includes the adversarial training, and the (non optimized) nearest neighbors extraction.
 
@@ -89,7 +95,7 @@ A luatorch version is also provided - it includes the adversarial training, and 
 * Get fasttext word embeddings
 ```
 wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.en.vec ;
-wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.fr.vec 
+wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.fr.vec
 ```
 
 * Train a model:
@@ -117,15 +123,17 @@ optional arguments:
   --seed SEED           initial random seed
   --vocSize VOCSIZE     vocabulary size
   --dim DIM             embedding size
-  --hidden HIDDEN       discriminator hidden layer size
+  --hidden HIDDEN       discriminator hidden layer size [3.1]
   --discDropout DISCDROPOUT
-                        discriminator dropout
+                        discriminator dropout [3.1]
   --smoothing SMOOTHING
-                        label smoothing value
+                        label smoothing value [3.1]
   --samplingRange SAMPLINGRANGE
                         sampling range on vocabulary for adversarial training
-  --beta BETA           orthogonality adjustment parameter
-  --k K                 iteration of discriminator training for each iteration
+                        [3.2]
+  --beta BETA           orthogonality adjustment parameter (equation 7)
+  --k K                 #iteration of discriminator training for each
+                        iteration
   --batchSize BATCHSIZE
                         batch size
   --learningRate LEARNINGRATE
@@ -133,12 +141,16 @@ optional arguments:
   --decayRate DECAYRATE
                         decay rate
   --nEpochs NEPOCHS     number of epochs
+  --halfDecayThreshold HALFDECAYTHRESHOLD
+                        if valid relative increase > this value for 2 epochs,
+                        half the LR
   --knn KNN             number of neighbors to extract
-  --distance DISTANCE   distance to use NN or CSLS
+  --distance {CSLS,NN}  distance to use NN or CSLS [2.3]
   --load LOAD           load parameters of generator
   --save SAVE           save parameters of generator
   --evalDict EVALDICT   dictionary for evaluation
   --gpuid GPUID
+
 ```
 
 The 10k first entries of the dictionary with are dumped at the last epoch.
@@ -146,10 +158,10 @@ The 10k first entries of the dictionary with are dumped at the last epoch.
 The option `--load file` and `--save file`, can be used to save and reload the generator state.
 
 ## Some results
-* 10k first English-French entries are provided [here](./sample.md) - corresponding to a P@5 score of 62.04 (vs. P@1 77.8 in the paper without refinment but using the authors own dictionary). The hyper-parameters are the same than the ones in the paper (except batch size) 
-* Unsupervized model selection: as shown in Figure 2 of the paper, the highest precision (evaluated on reference dictionary) is also corresponding to minimal average CSLS score over the first 10k entries - here at the epoch 59:
+* 10k first English-French entries are provided [here](./sample.md) - corresponding to a P@5 score of 62.24 (vs. P@1 77.8 in the paper without refinment but using the authors own dictionary). The hyper-parameters are the same than the ones in the paper (except batch size)
+* Unsupervized model selection: as shown in Figure 2 of the paper, the highest precision (evaluated on reference dictionary) is also corresponding to minimal average CSLS score over the first 10k entries - here at the epoch 59. The empty lines are showing score and precision for a training without half-decay strategy.
 ![Unsupervized Validation vs. Precision](./img/validation-precision.png)
-* For the same run, the following graph shows the evolution of the generator loss, of the discriminator loss, and of the (unsupervized) validation score. It is interesting to see that the discrimator loss decreases continuously till epoch 43 then struggle to keep position while generator loss decreases. In this run, a continuous decay rate of 0.99 was used, and no halving of the learning rate done. Also - learning rates of generator and discriminator are the same. It could be interesting to investigate other strategies. 
+* For the same run, the following graph shows the evolution of the generator loss, of the discriminator loss, and of the (unsupervized) validation score. It is interesting to see that the discrimator loss decreases continuously till epoch 43 then struggle to keep position while generator loss decreases. In this run, a continuous decay rate of 0.99 was used, and no halving of the learning rate done. Also - learning rates of generator and discriminator are the same. It could be interesting to investigate other strategies.
 ![Losses evolution vs. Validation](./img/Losses-Validation.png)
 * Finally, I tried for more challenging language pairs like Korean-English - the shape of the curves are really different. First, the generator does not seem to fool *at all* the discriminator. Also after few epoch of discriminator training, the loss of the generator training raises drastically as if discriminator wins the battle. In parallel, the validation curve does not show any clear sign of minimum reaching. I did not have any reference Korean-English dictionary to get an evaluation of the results, but surfing through generated dictionary does not show any good mapping. In the paper, scores for more exotic languages like Russian and Chinese are also comparatively very low. Is the mapping for these languages possible at all? More experiments with other hyper-parameters might help?
 ![Same for Korean-English](./img/koen.png)

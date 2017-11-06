@@ -25,6 +25,7 @@ parser.add_argument('--batchSize', default=64, type=int, help='batch size')
 parser.add_argument('--learningRate', default=0.1, type=float, help='learning rate')
 parser.add_argument('--decayRate', default=0.99, type=float, help='decay rate')
 parser.add_argument('--nEpochs', default=100, type=int, help='number of epochs')
+parser.add_argument('--halfDecayThreshold', default=0.1, type=float, help='if valid relative increase > this value for 2 epochs, half the LR')
 parser.add_argument('--knn', default=10, type=int, help='number of neighbors to extract')
 parser.add_argument('--distance', type=str, help='distance to use NN or CSLS [2.3]', choices=['CSLS', 'NN'])
 parser.add_argument('--load', type=str, help='load parameters of generator')
@@ -224,7 +225,10 @@ learningRate = args.learningRate
 # TRAINING
 
 print("* Start Training")
-for it in range(0, args.nEpochs):
+valids = []
+stopCondition = False
+it = 1
+while it <= args.nEpochs and not stopCondition:
   genLoss = 0
   discLoss = 0
   print("  * Epoch", it)
@@ -290,10 +294,22 @@ for it in range(0, args.nEpochs):
   print('  * --- ',it,'genLoss=',genLoss*args.batchSize/N, 'discLoss=', discLoss*args.batchSize/N/args.k,
         'learningRate=', learningRate, 'valid=', validationScore, 'eval=', evalScore)
 
-  learningRate = learningRate * args.decayRate
+  valids.append(validationScore)
 
-if args.save:
-  generator.save(args.save)
+  # if validationScore increases more than args.halfDecayThreshold for 2 epochs, half the LR
+  if (it > 3 and validationScore > valids[it-2] and validationScore > valids[it-3]
+    and (validationScore-valids[it-3])/abs(validationScore) > 2*args.halfDecayThreshold):
+    learningRate = learningRate / 2
+  else:
+    learningRate = learningRate * args.decayRate
+
+  if args.save:
+    generator.save(args.save+"_epoch"+str(it)+".t7")
+
+  it += 1
+  # stop completely when learningRate is not more than 20 initial learning rate
+  stopCondition = learningRate < args.learningRate / 20
+
 
 # -------------------------------------------------------
 # GET RESULTS
