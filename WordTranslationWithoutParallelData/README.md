@@ -11,7 +11,7 @@ Based on that starting point, the work described in the paper show that it is po
 
 - (A) As a starting point, we have two independently trained word embeddings (can be different domains or different languages). The goal is to train a mapping between these word embeddings. The mapping can be as simple as a linear mapping, but could be more complicated (any neural network).
 - (B) A first version of this mapping is obtained using adversarial learning following [Goodfellow, 2014] - where the generator is the projection mapping, and the discriminator is trying to make a difference between source projected embedding and native target embedding
-- (C) Based on this first mapping, a refinment method is proposed based on Procrustes solution [Schönemann, 1966]
+- (C) Based on this first mapping, a refinment method finding the optimal W is applied based on Procrustes solution [Schönemann, 1966]
 - (D) With a new distance metric (CSLS) - dealing with *hubs* issue - source-target pairs are extracted
 
 Key references:
@@ -27,7 +27,8 @@ Major follow-up:
 ## Step-by-Step analysis and Implementation notes
 
 ### The models
-* The generator is a simple Linear mapping defined in `net.py`, `Generator` class. The class also implement `orthogonalityUpdate` method (section 3.3). This method is called after each gradient update. Any other model could be implemented - just think about adaptation of the `orthogonalityUpdate` method.
+* The generator is a simple Linear mapping defined in `net.py`, `Generator` class. Any other model could be implemented - just think about adaptation of the `orthogonalityUpdate` method.
+* The class also implement `orthogonalityUpdate` method (section 3.3). This method is called after each gradient update. We found that beta=0.0001 was a better value than beta=0.01 proposed in the paper. (this value being also close to the one proposed in [Cisse, 2017])
 * The discriminator is a 2 layer network implemented also in `net.py` and as defined in 3.1. It has a single cell output activated by a sigmoid. The value is the probability of the input being a true target embedding.
 
 ```
@@ -76,7 +77,7 @@ For adversarial training, the process described in [Goodfellow, 2014] as been im
 * when learning rate reaches 1/20 of initial learning rate, the training stops
 
 ### Refinement
-Refinement Procedure as described in 2.2 is not yet implemented
+Refinement procedure is using generated dictionary of 10000 points - the anchors and use SVD decomposition to calculate optimate value for W.
 
 ## Using the script
 
@@ -85,7 +86,7 @@ Refinement Procedure as described in 2.2 is not yet implemented
 * `pytorch`
 * `scipy`
 * `progressbar2`
-* `FAISS` (more tricky to install)
+* `FAISS` (with the python binding - see [here](https://github.com/facebookresearch/faiss) )
 
 GPU can be used if available with `--gpuid ID` option in the script.
 
@@ -100,11 +101,11 @@ wget https://s3-us-west-1.amazonaws.com/fasttext-vectors/wiki.fr.vec
 
 * Train a model:
 ```
-python src/train.py wiki.en.vec  wiki.fr.vec --vocSize 50000 --gpuid 0 --nIter 40
+python -u src/train.py wiki.en.vec  wiki.fr.vec --vocSize 50000 --gpuid 0 --nIter 40
 ```
 note that the word embeddings will be saved to binary format so that next call can just load these binary files as following:
 ```
-python src/train.py wiki.en.vec_50000.bin wiki.fr.vec_50000.bin --vocSize 50000  --gpuid 0 --nIter 40
+python -u src/train.py wiki.en.vec_50000.bin wiki.fr.vec_50000.bin --vocSize 50000  --gpuid 0 --nIter 40
 ```
 
 Also - to speed-up calculation, the calculation of *rs(yt)* (formula 6) is done at the beginning of the script, and saved in file `wiki.fr.vec_200000.bin_rs_knn10` for further runs (depends only on vocabulary size and knn value).
@@ -145,17 +146,19 @@ optional arguments:
                         if valid relative increase > this value for 2 epochs,
                         half the LR
   --knn KNN             number of neighbors to extract
+  --skipRefinment
   --distance {CSLS,NN}  distance to use NN or CSLS [2.3]
   --load LOAD           load parameters of generator
   --save SAVE           save parameters of generator
   --evalDict EVALDICT   dictionary for evaluation
   --gpuid GPUID
-
 ```
 
 The 10k first entries of the dictionary with are dumped at the last epoch.
 
 The option `--load file` and `--save file`, can be used to save and reload the generator state.
+
+for `-save FILE` - the file saved will be `FILE_adversarial.t7` - corresponding to optimal solution found during adversarial training, then `FILE_refinement.t7` after refinement procedure.
 
 ## Some results
 * 10k first English-French entries are provided [here](./sample.md) - corresponding to a P@5 score of 62.24 (vs. P@1 77.8 in the paper without refinment but using the authors own dictionary). The hyper-parameters are the same than the ones in the paper (except batch size)

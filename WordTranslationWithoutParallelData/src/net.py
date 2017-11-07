@@ -14,7 +14,6 @@ class Generator(nn.Module):
       print("  * Load parameters from file: "+args.load)
       self.net.load_state_dict(torch.load(args.load))
 
-    self.W = None
     # get the mapping and initialize
     for param in self.net.parameters():
       if not args.load:
@@ -23,16 +22,24 @@ class Generator(nn.Module):
 
     print(self.net)
 
+  def load(self, filename):
+    self.net.load_state_dict(torch.load(filename))
+
   def forward(self, x):
     return self.net.forward(x)
 
   def save(self, filename):
     torch.save(self.net.state_dict(), filename)
 
+  def set(self, W):
+    list(self.net.parameters())[0].data.copy_(W)
+
   def orthogonalityUpdate(self, beta):
+    W = list(self.net.parameters())[0].data
     # update to keep W orthogonal
-    self.W = (1+beta) * self.W
-    self.W.addmm(-beta, torch.mm(self.W, self.W.t()), self.W)
+    W = (1+beta) * W
+    W.addmm(-beta, torch.mm(W, W.t()), W)
+    self.set(W)
 
 
 class Discriminator(nn.Module):

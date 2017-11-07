@@ -5,6 +5,7 @@ from scipy.spatial.distance import cosine
 import progressbar
 from net import Generator, Discriminator
 from os import path
+import numpy as np
 
 import argparse
 import math
@@ -19,7 +20,7 @@ parser.add_argument('--hidden', default=2048, type=int, help='discriminator hidd
 parser.add_argument('--discDropout', default=0.1, type=float, help='discriminator dropout [3.1]')
 parser.add_argument('--smoothing', default=0.2, type=float, help='label smoothing value [3.1]')
 parser.add_argument('--samplingRange', default=50000, type=int, help='sampling range on vocabulary for adversarial training [3.2]')
-parser.add_argument('--beta', default=0.01, type=float, help='orthogonality adjustment parameter (equation 7)')
+parser.add_argument('--beta', default=0.0001, type=float, help='orthogonality adjustment parameter (equation 7)')
 parser.add_argument('--k', default=1, type=int, help='#iteration of discriminator training for each iteration')
 parser.add_argument('--batchSize', default=64, type=int, help='batch size')
 parser.add_argument('--learningRate', default=0.1, type=float, help='learning rate')
@@ -27,6 +28,7 @@ parser.add_argument('--decayRate', default=0.99, type=float, help='decay rate')
 parser.add_argument('--nEpochs', default=100, type=int, help='number of epochs')
 parser.add_argument('--halfDecayThreshold', default=0.1, type=float, help='if valid relative increase > this value for 2 epochs, half the LR')
 parser.add_argument('--knn', default=10, type=int, help='number of neighbors to extract')
+parser.add_argument('--skipRefinment', action='store_true')
 parser.add_argument('--distance', type=str, help='distance to use NN or CSLS [2.3]', choices=['CSLS', 'NN'])
 parser.add_argument('--load', type=str, help='load parameters of generator')
 parser.add_argument('--save', type=str, help='save parameters of generator')
@@ -173,7 +175,7 @@ def find_matches(v, distance):
     return NN(v)
   return CSLS(v)
 
-def get_dictionary(n, distance):
+def get_dictionary(n, distance, keepId = False):
   # get the first n source vocab - and project in target embedding, find their mappings
   srcSubset = semb[0:n]
   if args.gpuid>=0:
@@ -193,7 +195,10 @@ def get_dictionary(n, distance):
     idx = list(range(args.knn))
     idx.sort(key=distance.__getitem__)
     validationScore += distance[idx[0]]
-    d[svoc[i]] = [tvoc[I[i][idx[j]]] for j in range(args.knn)]
+    if keepId:
+      d[i] = [I[i][idx[j]] for j in range(args.knn)]
+    else:
+      d[svoc[i]] = [tvoc[I[i][idx[j]]] for j in range(args.knn)]
 
   return d, validationScore/n
 
@@ -224,96 +229,128 @@ learningRate = args.learningRate
 # -------------------------------------------------------
 # TRAINING
 
-print("* Start Training")
-valids = []
-stopCondition = False
-it = 1
-while it <= args.nEpochs and not stopCondition:
-  genLoss = 0
-  discLoss = 0
-  print("  * Epoch", it)
-  bar = progressbar.ProgressBar()
-  N = min(args.samplingRange, args.vocSize)
-  for i in bar(range(0, math.ceil(N/args.batchSize))):
-    for j in range(0, args.k):
+if args.nEpochs>0:
+  print("* Start Training")
+  valids = []
+  optimalScore = 10000000
+  stopCondition = False
+  it = 1
+  while it <= args.nEpochs and not stopCondition:
+    genLoss = 0
+    discLoss = 0
+    print("  * Epoch", it)
+    bar = progressbar.ProgressBar()
+    N = min(args.samplingRange, args.vocSize)
+    for i in bar(range(0, math.ceil(N/args.batchSize))):
+      for j in range(0, args.k):
+        bsrcIdx = torch.min((torch.rand(args.batchSize)*N).long(), torch.LongTensor([N-1]))
+        btgtIdx = torch.min((torch.rand(args.batchSize)*N).long(), torch.LongTensor([N-1]))
+        batch_src = Variable(torch.index_select(semb, 0, bsrcIdx))
+        batch_tgt = Variable(torch.index_select(temb, 0, btgtIdx))
+        if args.gpuid>=0:
+          with torch.cuda.device(args.gpuid):
+            batch_src = batch_src.cuda()
+            batch_tgt = batch_tgt.cuda()
+
+        # projection of source in target
+        projectedSrc = generator(batch_src)
+
+        discriminator.zero_grad()
+
+        # calculate loss for batch src projected in target
+        discProjSrc = discriminator(projectedSrc).squeeze()
+        loss = loss_fn(discProjSrc, zeroClass)
+        discLoss = discLoss + loss.data[0]
+        loss.backward()
+
+        # loss for tgt classified with smoothed label
+        discTgt = discriminator(batch_tgt).squeeze()
+        loss = loss_fn(discTgt, smoothedOneClass)
+        discLoss = discLoss + loss.data[0]
+        loss.backward()
+
+        for param in discriminator.parameters():
+          param.data -= learningRate * param.grad.data
+
       bsrcIdx = torch.min((torch.rand(args.batchSize)*N).long(), torch.LongTensor([N-1]))
-      btgtIdx = torch.min((torch.rand(args.batchSize)*N).long(), torch.LongTensor([N-1]))
       batch_src = Variable(torch.index_select(semb, 0, bsrcIdx))
-      batch_tgt = Variable(torch.index_select(temb, 0, btgtIdx))
       if args.gpuid>=0:
         with torch.cuda.device(args.gpuid):
           batch_src = batch_src.cuda()
-          batch_tgt = batch_tgt.cuda()
-
-      # projection of source in target
-      projectedSrc = generator(batch_src)
-
-      discriminator.zero_grad()
 
       # calculate loss for batch src projected in target
+      projectedSrc = generator(batch_src)
       discProjSrc = discriminator(projectedSrc).squeeze()
-      loss = loss_fn(discProjSrc, zeroClass)
-      discLoss = discLoss + loss.data[0]
+
+      generator.zero_grad()
+      loss = loss_fn(discProjSrc, oneClass)
+      genLoss = genLoss + loss.data[0]
       loss.backward()
 
-      # loss for tgt classified with smoothed label
-      discTgt = discriminator(batch_tgt).squeeze()
-      loss = loss_fn(discTgt, smoothedOneClass)
-      discLoss = discLoss + loss.data[0]
-      loss.backward()
-
-      for param in discriminator.parameters():
+      for param in generator.parameters():
         param.data -= learningRate * param.grad.data
 
-    bsrcIdx = torch.min((torch.rand(args.batchSize)*N).long(), torch.LongTensor([N-1]))
-    batch_src = Variable(torch.index_select(semb, 0, bsrcIdx))
-    if args.gpuid>=0:
-      with torch.cuda.device(args.gpuid):
-        batch_src = batch_src.cuda()
+      generator.orthogonalityUpdate(args.beta)
 
-    # calculate loss for batch src projected in target
-    projectedSrc = generator(batch_src)
-    discProjSrc = discriminator(projectedSrc).squeeze()
+    evalScore = 'n/a'
+    d, validationScore = get_dictionary(10000, args.distance)
 
-    generator.zero_grad()
-    loss = loss_fn(discProjSrc, oneClass)
-    genLoss = genLoss + loss.data[0]
-    loss.backward()
+    if evalDict:
+      evalScore = eval_dictionary(d)
 
-    for param in generator.parameters():
-      param.data -= learningRate * param.grad.data
+    print('  * --- ',it,'genLoss=',genLoss*args.batchSize/N, 'discLoss=', discLoss*args.batchSize/N/args.k,
+          'learningRate=', learningRate, 'valid=', validationScore, 'eval=', evalScore)
 
-    generator.orthogonalityUpdate(args.beta)
+    valids.append(validationScore)
 
-  evalScore = 'n/a'
-  d, validationScore = get_dictionary(10000, args.distance)
+    # if validationScore increases more than args.halfDecayThreshold for 2 epochs, half the LR
+    if (it > 3 and validationScore > valids[it-2] and validationScore > valids[it-3]
+      and (validationScore-valids[it-3])/abs(validationScore) > 2*args.halfDecayThreshold):
+      learningRate = learningRate / 2
+    else:
+      learningRate = learningRate * args.decayRate
 
-  if evalDict:
-    evalScore = eval_dictionary(d)
+    if args.save and validationScore < optimalScore:
+      generator.save(args.save+"_adversarial.t7")
+      optimalScore = validationScore
+      print('  => saved as optimal W')
 
-  print('  * --- ',it,'genLoss=',genLoss*args.batchSize/N, 'discLoss=', discLoss*args.batchSize/N/args.k,
-        'learningRate=', learningRate, 'valid=', validationScore, 'eval=', evalScore)
+    it += 1
+    # stop completely when learningRate is not more than 20 initial learning rate
+    stopCondition = learningRate < args.learningRate / 20
 
-  valids.append(validationScore)
+# -------------------------------------------------------
+# EXTRACT 10000 first entries and calculate W using Procrustes solution
 
-  # if validationScore increases more than args.halfDecayThreshold for 2 epochs, half the LR
-  if (it > 3 and validationScore > valids[it-2] and validationScore > valids[it-3]
-    and (validationScore-valids[it-3])/abs(validationScore) > 2*args.halfDecayThreshold):
-    learningRate = learningRate / 2
-  else:
-    learningRate = learningRate * args.decayRate
+if not args.skipRefinment:
+  print('* Start Refining')
+  if args.save:
+    print('* reloading best saved')
+    generator.load(args.save+"_adversarial.t7")
+
+  d, v = get_dictionary(10000, args.distance, keepId = True)
+  print('CSLS score before refinement',v)
+
+  ne = len(d.keys())
+  X = np.zeros((ne, args.dim))
+  Y = np.zeros((ne, args.dim))
+  idx = 0
+  for k in d.keys():
+    X[idx] = semb[k].numpy()
+    Y[idx] = temb[d[k][0]].numpy()
+  A = np.matmul(Y.transpose(), X)
+  U, s, V = np.linalg.svd(A, full_matrices=True)
+  WP = np.matmul(U, V)
+  generator.set(torch.from_numpy(WP))
 
   if args.save:
-    generator.save(args.save+"_epoch"+str(it)+".t7")
-
-  it += 1
-  # stop completely when learningRate is not more than 20 initial learning rate
-  stopCondition = learningRate < args.learningRate / 20
-
+    generator.save(args.save+"_refinement.t7")
 
 # -------------------------------------------------------
 # GET RESULTS
 
 d, v = get_dictionary(10000, args.distance)
+print('CSLS score after refinement', v)
+
 for k in d.keys():
   print(k,"\t".join(d[k]))
