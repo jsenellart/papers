@@ -1,6 +1,7 @@
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
+from scipy.stats import special_ortho_group
 
 
 class Generator(nn.Module):
@@ -14,11 +15,8 @@ class Generator(nn.Module):
       print("  * Load parameters from file: "+args.load)
       self.net.load_state_dict(torch.load(args.load))
 
-    # get the mapping and initialize
-    for param in self.net.parameters():
-      if not args.load:
-        param.data.uniform_(-0.1,0.1)
-      self.W = param.data
+    W = special_ortho_group.rvs(args.dim)
+    list(self.net.parameters())[0].data.copy_(torch.from_numpy(W))
 
     print(self.net)
 

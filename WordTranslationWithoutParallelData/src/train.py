@@ -28,7 +28,7 @@ parser.add_argument('--decayRate', default=0.99, type=float, help='decay rate')
 parser.add_argument('--nEpochs', default=100, type=int, help='number of epochs')
 parser.add_argument('--halfDecayThreshold', default=0.1, type=float, help='if valid relative increase > this value for 2 epochs, half the LR')
 parser.add_argument('--knn', default=10, type=int, help='number of neighbors to extract')
-parser.add_argument('--skipRefinment', action='store_true')
+parser.add_argument('--refinementIterations', default=1, type=int, help='number of iteration of refinement')
 parser.add_argument('--distance', type=str, help='distance to use NN or CSLS [2.3]', choices=['CSLS', 'NN'])
 parser.add_argument('--load', type=str, help='load parameters of generator')
 parser.add_argument('--save', type=str, help='save parameters of generator')
@@ -321,11 +321,12 @@ if args.nEpochs>0:
 # -------------------------------------------------------
 # EXTRACT 10000 first entries and calculate W using Procrustes solution
 
-if not args.skipRefinment:
+if args.save:
+  print('* reloading best saved')
+  generator.load(args.save+"_adversarial.t7")
+
+if args.refinementIterations > 0:
   print('* Start Refining')
-  if args.save:
-    print('* reloading best saved')
-    generator.load(args.save+"_adversarial.t7")
 
   evalScore = 'n/a'
   d, v, dID = get_dictionary(10000, args.distance)
@@ -333,20 +334,27 @@ if not args.skipRefinment:
   if evalDict:
     evalScore = eval_dictionary(d)
 
-  print('CSLS score before refinement', v, evalScore)
+  print('  - CSLS score before refinement', v, evalScore)
+  for itref in range(args.refinementIterations):
+    ne = len(d.keys())
+    X = np.zeros((ne, args.dim))
+    Y = np.zeros((ne, args.dim))
+    idx = 0
+    for k in dID.keys():
+      X[idx] = semb[k].numpy()
+      Y[idx] = temb[dID[k][0]].numpy()
+      idx = idx + 1
+    A = np.matmul(Y.transpose(), X)
+    U, s, V = np.linalg.svd(A, full_matrices=True)
+    WP = np.matmul(U, V)
+    generator.set(torch.from_numpy(WP))
+    d, v, dID = get_dictionary(10000, args.distance)
 
-  ne = len(d.keys())
-  X = np.zeros((ne, args.dim))
-  Y = np.zeros((ne, args.dim))
-  idx = 0
-  for k in dID.keys():
-    X[idx] = semb[k].numpy()
-    Y[idx] = temb[dID[k][0]].numpy()
-    idx = idx + 1
-  A = np.matmul(Y.transpose(), X)
-  U, s, V = np.linalg.svd(A, full_matrices=True)
-  WP = np.matmul(U, V)
-  generator.set(torch.from_numpy(WP))
+    evalScore = 'n/a'
+    if evalDict:
+      evalScore = eval_dictionary(d)
+
+    print('  - CSLS score after refinement iteration', v, evalScore)
 
   if args.save:
     generator.save(args.save+"_refinement.t7")
