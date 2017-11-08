@@ -28,8 +28,8 @@ Major follow-up:
 
 ### The models
 * The generator is a simple Linear mapping defined in `net.py`, `Generator` class. Any other model could be implemented - just think about adaptation of the `orthogonalityUpdate` method.
-* The class also implement `orthogonalityUpdate` method (section 3.3). This method is called after each gradient update. We found that beta=0.0001 was a better value than beta=0.01 proposed in the paper. (this value being also close to the one proposed in [Cisse, 2017])
-* The discriminator is a 2 layer network implemented also in `net.py` and as defined in 3.1. It has a single cell output activated by a sigmoid. The value is the probability of the input being a true target embedding.
+* The class also implement `orthogonalityUpdate` method (section 3.3). This method is called after each gradient update. We found that beta=0.0001 was a better value than beta=0.01 proposed in the paper. (this value being also close to the one proposed in [Cisse, 2017]). Also W is initialized as a random orthogonal matrix using `scipy.stats.special_ortho_group`
+* The discriminator is a 2 layer network implemented also in `net.py` and as defined in 3.1. It has a single cell output activated by a sigmoid. The value is the probability of the input being a true target embedding. Layers are initialized with uniform value in [-0.1,0.1]
 
 ```
 Sequential (
@@ -46,7 +46,7 @@ it would be possible to consider a two cell output - and use a softmax layer, bu
 
 ### Extracting source-target pairs
 * Fast nearest neighbors is implemented using Facebook FAISS library [Johnson 2017] - using python binding
-* To calculate Cross-Domain Similarity Local Scaling (CSLS) - as defined in section 2.3 - the value \( r_S(y_t) \) is pre-calculated for the full target-dictionary. The results of FAISS `search` are rescored using the CSLS metrics
+* To calculate Cross-Domain Similarity Local Scaling (CSLS) - as defined in section 2.3 - the value \( r_S(y_t) \) is pre-calculated for the full target-dictionary. The results of FAISS `search` are rescored using the CSLS metrics. For simplicity, I am using -CSLS value so that minimal value is the better
 * !!note!! - I only implemented one-way CSLS. In 3.4, it is also mentioned that the mutual nearest neighbor are also considered to restrict the list of candidates.
 
 ### Evaluation
@@ -83,6 +83,7 @@ Refinement procedure is using generated dictionary of 10000 points - the anchors
 
 ### Dependency
 
+* Python 3+
 * `pytorch`
 * `scipy`
 * `progressbar2`
