@@ -26,18 +26,20 @@ parser.add_argument('--batchSize', default=64, type=int, help='batch size')
 parser.add_argument('--learningRate', default=0.1, type=float, help='learning rate')
 parser.add_argument('--decayRate', default=0.99, type=float, help='decay rate')
 parser.add_argument('--nEpochs', default=100, type=int, help='number of epochs')
-parser.add_argument('--halfDecayThreshold', default=0.1, type=float, help='if valid relative increase > this value for 2 epochs, half the LR')
+parser.add_argument('--halfDecayThreshold', default=0.03, type=float, help='if valid relative increase > this value for 2 epochs, half the LR')
 parser.add_argument('--knn', default=10, type=int, help='number of neighbors to extract')
 parser.add_argument('--refinementIterations', default=1, type=int, help='number of iteration of refinement')
 parser.add_argument('--distance', type=str, help='distance to use NN or CSLS [2.3]', choices=['CSLS', 'NN'])
 parser.add_argument('--load', type=str, help='load parameters of generator')
-parser.add_argument('--save', type=str, help='save parameters of generator')
+parser.add_argument('--save', type=str, help='save parameters of generator', required=True)
+parser.add_argument('--dump_output', type=str, help='dump the complete mapped dictionary')
 parser.add_argument('--evalDict', type=str, help='dictionary for evaluation')
 parser.add_argument('--gpuid', default=-1, type=int)
 
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
+np.random.seed(args.seed)
 
 print("* params: ", args)
 
@@ -167,7 +169,7 @@ def CSLS(v):
       rt += D[idx][j]
     rt /= args.knn
     for j in range(args.knn):
-      D[idx][j] = 2*D[idx][j]-rs[I[idx][j]]-rt
+      D[idx][j] = 1 + 2*D[idx][j]-rs[I[idx][j]]-rt
   return D, I
 
 def find_matches(v, distance):
@@ -302,16 +304,21 @@ if args.nEpochs>0:
 
     valids.append(validationScore)
 
-    # if validationScore increases more than args.halfDecayThreshold for 2 epochs, half the LR
-    if (it > 3 and validationScore > valids[it-2] and validationScore > valids[it-3]
-      and (validationScore-valids[it-3])/abs(validationScore) > 2*args.halfDecayThreshold):
-      learningRate = learningRate / 2
+    # if validationScore increases than halfDecayThreshold % above optimal score - come back to optimal and half decay
+    if (validationScore-optimalScore)/abs(optimalScore) > args.halfDecayThreshold:
+      generator.load(args.save+"_adversarial.t7")
+      it = optimalScoreIt
+      print(' ***** HALF DECAY - go back to iteration ', it)
+      learningRate = optimalScoreLR / 2
+      optimalScoreLR = learningRate
     else:
       learningRate = learningRate * args.decayRate
 
-    if args.save and validationScore < optimalScore:
+    if validationScore < optimalScore:
       generator.save(args.save+"_adversarial.t7")
       optimalScore = validationScore
+      optimalScoreIt = it
+      optimalScoreLR = learningRate
       print('  => saved as optimal W')
 
     it += 1
@@ -321,9 +328,8 @@ if args.nEpochs>0:
 # -------------------------------------------------------
 # EXTRACT 10000 first entries and calculate W using Procrustes solution
 
-if args.save:
-  print('* reloading best saved')
-  generator.load(args.save+"_adversarial.t7")
+print('* reloading best saved')
+generator.load(args.save+"_adversarial.t7")
 
 if args.refinementIterations > 0:
   print('* Start Refining')
@@ -356,19 +362,13 @@ if args.refinementIterations > 0:
 
     print('  - CSLS score after refinement iteration', v, evalScore)
 
-  if args.save:
-    generator.save(args.save+"_refinement.t7")
+  generator.save(args.save+"_refinement.t7")
 
 # -------------------------------------------------------
 # GET RESULTS
 
-d, v, dID = get_dictionary(10000, args.distance)
-
-evalScore = 'n/a'
-if evalDict:
-  evalScore = eval_dictionary(d)
-
-print('CSLS score after refinement', v, evalScore)
-
-for k in d.keys():
-  print(k,"\t".join(d[k]))
+if args.dump_output:
+  with open(args.dump_output, 'w') as d:
+    d, v, dID = get_dictionary(args.vocSize, args.distance)
+    for k in d.keys():
+      print(k,"\t".join(d[k]))
