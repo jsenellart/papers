@@ -175,7 +175,7 @@ def find_matches(v, distance):
     return NN(v)
   return CSLS(v)
 
-def get_dictionary(n, distance, keepId = False):
+def get_dictionary(n, distance):
   # get the first n source vocab - and project in target embedding, find their mappings
   srcSubset = semb[0:n]
   if args.gpuid>=0:
@@ -187,6 +187,7 @@ def get_dictionary(n, distance, keepId = False):
   D, I = find_matches(proj, distance)
 
   d = {}
+  dID = {}
 
   validationScore = 0
 
@@ -195,12 +196,10 @@ def get_dictionary(n, distance, keepId = False):
     idx = list(range(args.knn))
     idx.sort(key=distance.__getitem__)
     validationScore += distance[idx[0]]
-    if keepId:
-      d[i] = [I[i][idx[j]] for j in range(args.knn)]
-    else:
-      d[svoc[i]] = [tvoc[I[i][idx[j]]] for j in range(args.knn)]
+    dID[i] = [I[i][idx[j]] for j in range(args.knn)]
+    d[svoc[i]] = [tvoc[I[i][idx[j]]] for j in range(args.knn)]
 
-  return d, validationScore/n
+  return d, validationScore/n, dID
 
 # -------------------------------------------------------
 # MODEL BUILDING
@@ -293,7 +292,7 @@ if args.nEpochs>0:
       generator.orthogonalityUpdate(args.beta)
 
     evalScore = 'n/a'
-    d, validationScore = get_dictionary(10000, args.distance)
+    d, validationScore, dID = get_dictionary(10000, args.distance)
 
     if evalDict:
       evalScore = eval_dictionary(d)
@@ -328,16 +327,22 @@ if not args.skipRefinment:
     print('* reloading best saved')
     generator.load(args.save+"_adversarial.t7")
 
-  d, v = get_dictionary(10000, args.distance, keepId = True)
-  print('CSLS score before refinement',v)
+  evalScore = 'n/a'
+  d, v, dID = get_dictionary(10000, args.distance)
+
+  if evalDict:
+    evalScore = eval_dictionary(d)
+
+  print('CSLS score before refinement', v, evalScore)
 
   ne = len(d.keys())
   X = np.zeros((ne, args.dim))
   Y = np.zeros((ne, args.dim))
   idx = 0
-  for k in d.keys():
+  for k in dID.keys():
     X[idx] = semb[k].numpy()
-    Y[idx] = temb[d[k][0]].numpy()
+    Y[idx] = temb[dID[k][0]].numpy()
+    idx = idx + 1
   A = np.matmul(Y.transpose(), X)
   U, s, V = np.linalg.svd(A, full_matrices=True)
   WP = np.matmul(U, V)
@@ -349,8 +354,13 @@ if not args.skipRefinment:
 # -------------------------------------------------------
 # GET RESULTS
 
-d, v = get_dictionary(10000, args.distance)
-print('CSLS score after refinement', v)
+d, v, dID = get_dictionary(10000, args.distance)
+
+evalScore = 'n/a'
+if evalDict:
+  evalScore = eval_dictionary(d)
+
+print('CSLS score after refinement', v, evalScore)
 
 for k in d.keys():
   print(k,"\t".join(d[k]))
