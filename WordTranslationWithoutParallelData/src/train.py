@@ -27,6 +27,7 @@ parser.add_argument('--learningRate', default=0.1, type=float, help='learning ra
 parser.add_argument('--decayRate', default=0.99, type=float, help='decay rate')
 parser.add_argument('--nEpochs', default=100, type=int, help='number of epochs')
 parser.add_argument('--halfDecayThreshold', default=0.03, type=float, help='if valid relative increase > this value for 2 epochs, half the LR')
+parser.add_argument('--halfDecayDelay', default=8, type=int, help='if no progress in this period, half the LR')
 parser.add_argument('--knn', default=10, type=int, help='number of neighbors to extract')
 parser.add_argument('--refinementIterations', default=1, type=int, help='number of iteration of refinement')
 parser.add_argument('--distance', type=str, help='distance to use NN or CSLS [2.3]', choices=['CSLS', 'NN'])
@@ -104,15 +105,23 @@ def read_embed(filename):
       assert embeddingSize == args.dim, "embedding size does not match dim"
       weights = torch.Tensor(args.vocSize, embeddingSize)
       voc = []
+      vocDict = dict()
       i = 0
+      bar = progressbar.ProgressBar(max_value=args.vocSize)
       while i != args.vocSize:
         line = f.readline().strip()
         splitLine = line.split(" ")
-        if len(splitLine)==args.dim+1:
-          voc.append(splitLine[0])
-          for j in range(1, args.dim):
-            weights[i][j-1] = float(splitLine[j])
-          i = i + 1
+        if len(splitLine) == args.dim + 1:
+          token = splitLine[0]
+          if token in vocDict:
+            print('*** duplicate key in word embedding: '+token)
+          else:
+            vocDict[token] = i
+            voc.append(token)
+            for j in range(1, args.dim):
+              weights[i][j-1] = float(splitLine[j])
+            bar.update(i)
+            i = i + 1
       torch.save([voc, weights], filename+"_"+str(args.vocSize)+".bin")
       print("  * saved to "+filename+"_"+str(args.vocSize)+".bin")
       return voc, weights
@@ -304,8 +313,17 @@ if args.nEpochs>0:
 
     valids.append(validationScore)
 
-    # if validationScore increases than halfDecayThreshold % above optimal score - come back to optimal and half decay
-    if (validationScore-optimalScore)/abs(optimalScore) > args.halfDecayThreshold:
+    if validationScore < optimalScore:
+      generator.save(args.save+"_adversarial.t7")
+      optimalScore = validationScore
+      optimalScoreIt = it
+      optimalScoreLR = learningRate
+      print('  => saved as optimal W')
+
+    # if validationScore increases than halfDecayThreshold % above optimal score
+    # or no progress for args.haldDecayDelay epochs - come back to optimal and half decay
+    if ((validationScore-optimalScore)/abs(optimalScore) > args.halfDecayThreshold
+        or it - optimalScoreIt > args.halfDecayDelay):
       generator.load(args.save+"_adversarial.t7")
       it = optimalScoreIt
       print(' ***** HALF DECAY - go back to iteration ', it)
@@ -313,13 +331,6 @@ if args.nEpochs>0:
       optimalScoreLR = learningRate
     else:
       learningRate = learningRate * args.decayRate
-
-    if validationScore < optimalScore:
-      generator.save(args.save+"_adversarial.t7")
-      optimalScore = validationScore
-      optimalScoreIt = it
-      optimalScoreLR = learningRate
-      print('  => saved as optimal W')
 
     it += 1
     # stop completely when learningRate is not more than 20 initial learning rate
@@ -368,7 +379,7 @@ if args.refinementIterations > 0:
 # GET RESULTS
 
 if args.dump_output:
-  with open(args.dump_output, 'w') as d:
+  with open(args.dump_output, 'w') as fd:
     d, v, dID = get_dictionary(args.vocSize, args.distance)
     for k in d.keys():
-      print(k,"\t".join(d[k]))
+      fd.write(k+"\t"+"\t".join(d[k])+"\n")
