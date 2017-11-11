@@ -30,7 +30,8 @@ parser.add_argument('--halfDecayThreshold', default=0.03, type=float, help='if v
 parser.add_argument('--halfDecayDelay', default=8, type=int, help='if no progress in this period, half the LR')
 parser.add_argument('--knn', default=10, type=int, help='number of neighbors to extract')
 parser.add_argument('--refinementIterations', default=1, type=int, help='number of iteration of refinement')
-parser.add_argument('--distance', type=str, help='distance to use NN or CSLS [2.3]', choices=['CSLS', 'NN'])
+parser.add_argument('--distance', type=str, default='CSLS', help='distance to use NN or CSLS [2.3]', choices=['CSLS', 'NN'])
+parser.add_argument('--validDistance', type=str, default='COS', help='validation distance', choices=['CSLS', 'COS'])
 parser.add_argument('--load', type=str, help='load parameters of generator')
 parser.add_argument('--save', type=str, help='save parameters of generator', required=True)
 parser.add_argument('--dump_output', type=str, help='dump the complete mapped dictionary')
@@ -41,6 +42,11 @@ args = parser.parse_args()
 
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
+
+if args.gpuid >= 0:
+  # allocate dummy tensor to check GPU is ok
+  with torch.cuda.device(args.gpuid):
+    torch.Tensor(1).cuda()
 
 print("* params: ", args)
 
@@ -145,7 +151,8 @@ def NN(v):
   cv = v
   if v.dim() == 1:
     cv.resize_(1, cv.shape[0])
-  return index.search(cv.numpy(), args.knn)
+  D, I=index.search(cv.numpy(), args.knn)
+  return D, I, D
 
 # calculate rs on the full vocabulary or load it from file
 rs = None
@@ -159,7 +166,7 @@ else:
   rs = torch.Tensor(args.vocSize)
   for istep in bar(range(0, args.vocSize, 500)):
     istepplus = min(istep+500, args.vocSize)
-    Ds, Is = NN(temb[istep:istepplus])
+    Ds, Is, Cs = NN(temb[istep:istepplus])
     for i in range(istep, istepplus):
       rs[i] = 0
       for l in range(args.knn):
@@ -170,16 +177,17 @@ else:
 
 def CSLS(v):
   # get nearest neighbors and return adjusted cos distance
-  D, I = NN(v)
+  D, I, COS = NN(v)
+  COS = np.copy(D)
   for idx in range(v.shape[0]):
     rt = 0
     for j in range(args.knn):
-      D[idx][j] = cosine(v[idx].numpy(), temb[I[idx][j]].numpy())
-      rt += D[idx][j]
+      COS[idx][j] = cosine(v[idx].numpy(), temb[I[idx][j]].numpy())
+      rt += COS[idx][j]
     rt /= args.knn
     for j in range(args.knn):
-      D[idx][j] = 1 + 2*D[idx][j]-rs[I[idx][j]]-rt
-  return D, I
+      D[idx][j] = 2*COS[idx][j]-rs[I[idx][j]]-rt
+  return D, I, COS
 
 def find_matches(v, distance):
   if distance == 'NN':
@@ -195,7 +203,7 @@ def get_dictionary(n, distance):
 
   proj = generator(Variable(srcSubset, requires_grad = False)).data.cpu()
 
-  D, I = find_matches(proj, distance)
+  D, I, COS = find_matches(proj, distance)
 
   d = {}
   dID = {}
@@ -206,7 +214,10 @@ def get_dictionary(n, distance):
     distance = D[i].tolist()
     idx = list(range(args.knn))
     idx.sort(key=distance.__getitem__)
-    validationScore += distance[idx[0]]
+    if args.validDistance=='COS':
+      validationScore += COS[i][idx[0]]
+    else:
+      validationScore += distance[idx[0]]
     dID[i] = [I[i][idx[j]] for j in range(args.knn)]
     d[svoc[i]] = [tvoc[I[i][idx[j]]] for j in range(args.knn)]
 
