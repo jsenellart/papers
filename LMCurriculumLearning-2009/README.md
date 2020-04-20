@@ -55,7 +55,7 @@ def loss_fnc(y_true, y_pred):
 
 *logrank* is calculated on `--test_size N` sentences of the test file - by finding the average logrank calculated on all the windows in the test examples. *logrank* for a given windows is the rank of the actual 4+1 example, in comparison with all the 4+other possible examples. Ideally the rank would be 1 meaning that given the 4 word context, the language model always rank the actual example first in comparison to all the other possible vocab in the same context. This prediction is however clearly not always possible, since 4 word context is small, and many other possible words can fit. When trained on 2009 English wikipedia corpus (638 million 5-word windows), the paper reports the best log rank being 2.68 meaning an equivalent rank of \~14.
 
-Curriculum learning is activated with the parameters: `--curriculum_steps S` indicating how many steps are necessary to use full vocabulary. 1 step is the default, and means that the full vocabulary is used immediately (so without curriculum learning). The paper use 4 steps. A step is use for `--curriculum_examples N` examples - this parameter is calculated as in the paper, before the filtering of the sentences with out of vocabulary tokens.
+Curriculum learning is activated with the parameters: `--curriculum_steps S` indicating how many steps are necessary to use full vocabulary. 1 step is the default, and means that the full vocabulary is used immediately (so without curriculum learning). The paper use 4 steps. A step is use for `--curriculum_examples N` examples - this parameter is calculated (as in the paper), before the filtering of the sentences with out of vocabulary tokens. So each step will include more examples.
 
 # References
 
