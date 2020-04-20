@@ -27,9 +27,15 @@ o2 = K.layers.Dense(100, activation='tanh')(o1)
 predictions = K.layers.Dense(1)(o2)
 ```
 
-The code is using checkpoint saving and tensorboard metrics for following the progress.
+![Network architecture](LMArchitecture.png)
+
+The code is using tensorflow checkpoint saving and tensorboard metrics for following the progress.
 
 You can use `-C config_file` to create a configuration file for some specific parameters, and use this configuration file with `-c config_file`.
+
+Launching a training is simply done with: `python -c config_file` or `python [options]`.
+
+See `python -h` for more information.
 
 Curriculum learning is activated with the parameters: `--curriculum_steps S` indicating how many steps are necessary to use full vocabulary. 1 step is the default, and means that the full vocabulary is used immediately (so without curriculum learning). The paper use 4 steps. A step is use for `--curriculum_examples N` examples - this parameter is calculated as in the paper, before the filtering of the sentences with out of vocabulary tokens.
 
