@@ -1,6 +1,6 @@
 # Introduction
 
-This program implements the language model from the paper **Curriculum Learning** [*Bengio, 2009*] using tensorflow.
+This program implements the language model from the paper [**Curriculum Learning** [*Bengio, 2009*]](#references) using tensorflow.
 
 
 # Prerequisite
