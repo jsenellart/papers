@@ -173,8 +173,7 @@ train_data = train_data.flat_map(lambda x,y: tf.data.Dataset.zip((tf.data.Datase
 train_data = train_data.batch(args.batch_size*2)
 
 # Test Data preparation
-encoded_test_data = test_dataset.map(encode_map_fn)
-test_data = encoded_test_data.shuffle(args.buffer_size)
+test_data = test_dataset.map(encode_map_fn)
 # apply window operator, and remove empty list
 test_data = test_data.map(window_map_test_fn).apply(filter_nonempty_x)
 test_data = test_data.flat_map(lambda x: tf.data.Dataset.from_tensor_slices(x))
@@ -196,6 +195,8 @@ def loss_fnc(y_true, y_pred):
 
 model = K.Model(inputs=main_input, outputs=predictions)
 
+print(model.summary())
+
 # Train the model
 sgd = K.optimizers.SGD(lr=args.sgd_learning_rate,
                        decay=args.sgd_decay,
@@ -203,24 +204,27 @@ sgd = K.optimizers.SGD(lr=args.sgd_learning_rate,
                        nesterov=True)
 model.compile(sgd, loss=loss_fnc)
 
-ckpt = tf.train.Checkpoint(step=tf.Variable(0, dtype=tf.int64), optimizer=sgd, net=model)
+ckpt = tf.train.Checkpoint(step=tf.Variable(0, dtype=tf.int64),
+                           optimizer=sgd,
+                           net=model,
+                           nexamples=nexamples)
 manager = tf.train.CheckpointManager(ckpt, args.model, max_to_keep=3)
 
 ckpt.restore(manager.latest_checkpoint)
 if manager.latest_checkpoint:
   print("Restored from {}".format(manager.latest_checkpoint))
+  print("Total number of examples=", nexamples.numpy())
 else:
   print("Initializing from scratch.")
 
 summary_writer = tf.summary.create_file_writer(args.model)
 
-first = True
 while True:
   rate = (int(nexamples.numpy()*1.0/args.curriculum_examples)+1.0)/args.curriculum_steps
   competence.assign(tf.cast(tf.math.minimum(rate, 1.0), tf.float32))
 
   # Train
-  if ckpt.step != 0 or not first:
+  if ckpt.save_counter != 0:
     h = model.fit(train_data, steps_per_epoch=args.steps_per_epoch, verbose=args.verbose)
     loss = h.history["loss"][0]
     ckpt.step.assign_add(args.steps_per_epoch)
@@ -229,24 +233,34 @@ while True:
     first = False
 
   # Eval
-  print("Evaluating model")
-  sum_logrank = 0
-  for test in test_data:
-    w = test[4]-1
-    t_expanded = tf.concat([tf.reshape(tf.tile(test[:4],[VOC_SIZE]),
-                                       [VOC_SIZE,4]),
-                            vocabs],
-                           axis=1)
-    out = model.predict(t_expanded)
-    out_w = out[w]
-    sorted_out = tf.sort(tf.reshape(out,[VOC_SIZE]), direction='DESCENDING')
-    rank = tf.where(tf.equal(sorted_out,out_w))[:,0][0]+1
-    sum_logrank += tf.math.log(tf.cast(rank,dtype=tf.float32))
+  test_name = "%s/test_%d.out" % (args.model, ckpt.save_counter)
+  print("Evaluating model => ", test_name)
+  with open(test_name, "w") as ftest:
+    sum_logrank = 0
+    for test in test_data:
+      w = test[4]-1
+      windows_s = "["+" ".join([vocab[t-1] for t in test[:-1]])+ "]..."+vocab[w]
+      t_expanded = tf.concat([tf.reshape(tf.tile(test[:4],[VOC_SIZE]),
+                                         [VOC_SIZE,4]),
+                              vocabs],
+                             axis=1)
+      out = model.predict(t_expanded)
+      out_w = out[w]
+      sorted_out = tf.sort(tf.reshape(out,[VOC_SIZE]), direction='DESCENDING')
+      rank = tf.where(tf.equal(sorted_out,out_w))[:,0][0]+1
+      best10 =" ".join([vocab[tf.where(tf.equal(sorted_out, out[idx]))[:,0][0].numpy()]+"/"+
+                          str(tf.where(tf.equal(sorted_out, out[idx]))[:,0][0].numpy())
+                        for idx in range(10)])
+      ftest.write("\t".join((windows_s, str(rank.numpy()),
+                       str(tf.math.log(tf.cast(rank,dtype=tf.float32)).numpy()), best10))+"\n")
+      sum_logrank += tf.math.log(tf.cast(rank,dtype=tf.float32))
+    ftest.write("======\n%f\n" % (sum_logrank.numpy()/args.test_size))
 
-  print(ckpt.step.numpy(), "==>", "competence", competence.numpy(), "loss", loss, "logrank", sum_logrank.numpy()/args.test_size)
+  print(ckpt.step.numpy()*args.batch_size, "==>", "total windows", nexamples.numpy(), "competence", competence.numpy(), "loss", loss, "logrank", sum_logrank.numpy()/args.test_size)
   with summary_writer.as_default():
     tf.summary.scalar('logrank', sum_logrank/args.test_size, step=ckpt.step*args.batch_size)
     tf.summary.scalar('competence', competence, step=ckpt.step*args.batch_size)
+    tf.summary.scalar('total windows', nexamples, step=ckpt.step*args.batch_size)
     if loss is not None:
       tf.summary.scalar('train_loss', loss, step=ckpt.step*args.batch_size)
   manager.save()
