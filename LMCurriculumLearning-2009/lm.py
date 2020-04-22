@@ -2,6 +2,8 @@ from collections import Counter
 from pathlib import Path
 import sys
 import random
+import math
+from tqdm import tqdm
 
 import configargparse
 
@@ -14,6 +16,7 @@ parser.add("--include_unk", "-u", action="store_true")
 parser.add("--test_size", type=int, default=1000)
 parser.add("--buffer_size", type=int, default=500000)
 parser.add("--batch_size", type=int, default=512)
+parser.add("--test_batch_size", type=int, default=32)
 parser.add("--steps_per_epoch", type=int, default=4096)
 parser.add("--vocab", "-v", type=int, default=20000)
 parser.add("--vocab_file", help="vocabulary file", default=None)
@@ -88,8 +91,7 @@ if args.include_unk:
 
 #let us define a tensor with all vocabs - that we will use in test
 #to find rank of a given context-word score
-vocabs = tf.cast(tf.reshape(tf.constant(range(1,VOC_SIZE+1)),
-                            [VOC_SIZE,1]),
+vocabs = tf.cast(tf.constant(range(1,VOC_SIZE+1)),
                  dtype=tf.int64)
 
 encoder = tfds.features.text.TokenTextEncoder(vocab, tokenizer=tokenizer)
@@ -178,6 +180,7 @@ test_data = test_dataset.map(encode_map_fn)
 test_data = test_data.map(window_map_test_fn).apply(filter_nonempty_x)
 test_data = test_data.flat_map(lambda x: tf.data.Dataset.from_tensor_slices(x))
 test_data = test_data.take(args.test_size)
+test_data = test_data.batch(args.test_batch_size)
 
 # Definition of the model and loss function
 main_input = K.layers.Input(shape=(5), dtype='int32', name='main_input')
@@ -237,23 +240,28 @@ while True:
   print("Evaluating model => ", test_name)
   with open(test_name, "w") as ftest:
     sum_logrank = 0
-    for test in test_data:
-      w = test[4]-1
-      windows_s = "["+" ".join([vocab[t-1] for t in test[:-1]])+ "]..."+vocab[w]
-      t_expanded = tf.concat([tf.reshape(tf.tile(test[:4],[VOC_SIZE]),
-                                         [VOC_SIZE,4]),
-                              vocabs],
+    for test in tqdm(test_data,
+                     unit="batch",
+                     total=math.ceil(args.test_size*1.0/args.test_batch_size)):
+      t_expanded = tf.concat([tf.reshape(tf.tile(test[:,:4],[1,VOC_SIZE]),
+                                         [-1, 4]),
+                              tf.reshape(tf.tile(vocabs,[test.shape[0]]),
+                                         [-1, 1])],
                              axis=1)
       out = model.predict(t_expanded)
-      out_w = out[w]
-      sorted_out = tf.sort(tf.reshape(out,[VOC_SIZE]), direction='DESCENDING')
-      rank = tf.where(tf.equal(sorted_out,out_w))[:,0][0]+1
-      best10 =" ".join([vocab[tf.where(tf.equal(sorted_out, out[idx]))[:,0][0].numpy()]+"/"+
-                          str(tf.where(tf.equal(sorted_out, out[idx]))[:,0][0].numpy())
-                        for idx in range(10)])
-      ftest.write("\t".join((windows_s, str(rank.numpy()),
-                       str(tf.math.log(tf.cast(rank,dtype=tf.float32)).numpy()), best10))+"\n")
-      sum_logrank += tf.math.log(tf.cast(rank,dtype=tf.float32))
+      out = tf.reshape(out, [-1, VOC_SIZE])
+      for ib in range(test.shape[0]):
+        w = test[ib][4]-1
+        windows_s = "["+" ".join([vocab[t-1] for t in test[ib][:-1]])+ "]..."+vocab[w]
+        out_w = out[ib][w]
+        sorted_out = tf.sort(tf.reshape(out[ib],[VOC_SIZE]), direction='DESCENDING')
+        rank = tf.where(tf.equal(sorted_out,out_w))[:,0][0]+1
+        best10 =" ".join([vocab[tf.where(tf.equal(sorted_out, out[ib][idx]))[:,0][0].numpy()]+"/"+
+                            str(tf.where(tf.equal(sorted_out, out[ib][idx]))[:,0][0].numpy())
+                          for idx in range(10)])
+        ftest.write("\t".join((windows_s, str(rank.numpy()),
+                         str(tf.math.log(tf.cast(rank,dtype=tf.float32)).numpy()), best10))+"\n")
+        sum_logrank += tf.math.log(tf.cast(rank,dtype=tf.float32))
     ftest.write("======\n%f\n" % (sum_logrank.numpy()/args.test_size))
 
   print(ckpt.step.numpy()*args.batch_size, "==>", "total windows", nexamples.numpy(), "competence", competence.numpy(), "loss", loss, "logrank", sum_logrank.numpy()/args.test_size)
