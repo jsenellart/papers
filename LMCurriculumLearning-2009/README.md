@@ -38,7 +38,7 @@ Launching a training is simply done with: `python -c config_file` or `python [op
 
 See `python lm.py -h` for more information.
 
-Function loss is **1-margin loss** function calculated as:
+Function loss is **max-margin loss** function calculated as:
 
 ![1-margin loss](1marginloss.png)
 

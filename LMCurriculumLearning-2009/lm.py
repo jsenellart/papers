@@ -242,6 +242,7 @@ while True:
     sum_logrank = 0
     for test in tqdm(test_data,
                      unit="batch",
+                     ncols=80,
                      total=math.ceil(args.test_size*1.0/args.test_batch_size)):
       t_expanded = tf.concat([tf.reshape(tf.tile(test[:,:4],[1,VOC_SIZE]),
                                          [-1, 4]),
@@ -256,8 +257,8 @@ while True:
         out_w = out[ib][w]
         sorted_out = tf.sort(tf.reshape(out[ib],[VOC_SIZE]), direction='DESCENDING')
         rank = tf.where(tf.equal(sorted_out,out_w))[:,0][0]+1
-        best10 =" ".join([vocab[tf.where(tf.equal(sorted_out, out[ib][idx]))[:,0][0].numpy()]+"/"+
-                            str(tf.where(tf.equal(sorted_out, out[ib][idx]))[:,0][0].numpy())
+        best10 =" ".join([vocab[tf.where(tf.equal(out[ib], sorted_out[idx]))[:,0][0].numpy()]+"/"+
+                            str(sorted_out[idx].numpy())
                           for idx in range(10)])
         ftest.write("\t".join((windows_s, str(rank.numpy()),
                          str(tf.math.log(tf.cast(rank,dtype=tf.float32)).numpy()), best10))+"\n")
