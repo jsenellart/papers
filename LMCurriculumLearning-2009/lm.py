@@ -27,11 +27,19 @@ parser.add("--sgd_decay", default=1e-6, type=float)
 parser.add("--sgd_momentum", default=0.9, type=float)
 parser.add("--curriculum_steps", default=1, type=int)
 parser.add("--curriculum_examples", default=100000000, type=int)
+parser.add("--curriculum_vocabs", type=int, action="append")
+parser.add("--window_size", type=int, default=5)
+parser.add("--embedding_size", type=int, default=50)
+parser.add("--dense_size", type=int, default=100)
 
 args = parser.parse_args()
 
 # Display all of values - and where they are coming from
 print(parser.format_values())
+
+WINDOW_SIZE = args.window_size
+EMBEDDING_SIZE = args.embedding_size
+DENSE_SIZE = args.dense_size
 
 if args.create_config:
   options = {}
@@ -113,22 +121,21 @@ nexamples = tf.Variable(0, dtype=tf.int64)
 def window_train(token_list):
   windows = []
   labels = []
-  for i in range(len(token_list)-4):
-    max_window = tf.math.reduce_max(token_list[i:i+5])
+  for i in range(len(token_list)-WINDOW_SIZE+1):
+    max_window = tf.math.reduce_max(token_list[i:i+WINDOW_SIZE])
     if max_window <= tf.cast(competence*VOC_SIZE, tf.int64):
-      windows.append(token_list[i:i+5])
+      windows.append(token_list[i:i+WINDOW_SIZE])
       labels.append(0)
-      fake=[token_list[i],
-            token_list[i+1],
-            token_list[i+2],
-            token_list[i+3],
-            tf.random.uniform([],
+      fake = []
+      for j in range(WINDOW_SIZE-1):
+        fake.append(token_list[i+j])
+      fake.append(tf.random.uniform([],
                               minval=1,
                               maxval=tf.cast(competence*VOC_SIZE,tf.dtypes.int64),
-                              dtype=tf.dtypes.int64)]
+                              dtype=tf.dtypes.int64))
       windows.append(fake)
       labels.append(1)
-  nexamples.assign_add(tf.cast(len(token_list)-4, tf.int64))
+  nexamples.assign_add(tf.cast(len(token_list)-WINDOW_SIZE+1, tf.int64))
   return windows, labels
 
 def window_map_train_fn(token_list):
@@ -136,7 +143,7 @@ def window_map_train_fn(token_list):
                                    inp=[token_list], 
                                    Tout=(tf.int64, tf.float32))
 
-  windows.set_shape([None,5])
+  windows.set_shape([None,WINDOW_SIZE])
   labels.set_shape([None])
 
   return windows, labels
@@ -144,10 +151,10 @@ def window_map_train_fn(token_list):
 def window_test(token_list):
   windows = []
   labels = []
-  for i in range(len(token_list)-4):
-    max_window = tf.math.reduce_max(token_list[i:i+5])
+  for i in range(len(token_list)-WINDOW_SIZE+1):
+    max_window = tf.math.reduce_max(token_list[i:i+WINDOW_SIZE])
     if max_window <= tf.cast(VOC_SIZE, tf.int64):
-      windows.append(token_list[i:i+5])
+      windows.append(token_list[i:i+WINDOW_SIZE])
       labels.append(0)
   return windows, labels
 
@@ -156,7 +163,7 @@ def window_map_test_fn(token_list):
                                    inp=[token_list], 
                                    Tout=(tf.int64, tf.float32))
 
-  windows.set_shape([None,5])
+  windows.set_shape([None,WINDOW_SIZE])
 
   return windows
 
@@ -183,10 +190,10 @@ test_data = test_data.take(args.test_size)
 test_data = test_data.batch(args.test_batch_size)
 
 # Definition of the model and loss function
-main_input = K.layers.Input(shape=(5), dtype='int32', name='main_input')
-embedding = K.layers.Embedding(VOC_SIZE+1, 50)(main_input)
-o1 = K.layers.Reshape((250,))(embedding)
-o2 = K.layers.Dense(100, activation='tanh')(o1)
+main_input = K.layers.Input(shape=(WINDOW_SIZE), dtype='int32', name='main_input')
+embedding = K.layers.Embedding(VOC_SIZE+1, EMBEDDING_SIZE)(main_input)
+o1 = K.layers.Reshape((WINDOW_SIZE*EMBEDDING_SIZE,))(embedding)
+o2 = K.layers.Dense(DENSE_SIZE, activation='tanh')(o1)
 predictions = K.layers.Dense(1)(o2)
 
 def loss_fnc(y_true, y_pred):
@@ -223,7 +230,13 @@ else:
 summary_writer = tf.summary.create_file_writer(args.model)
 
 while True:
-  rate = (int(nexamples.numpy()*1.0/args.curriculum_examples)+1.0)/args.curriculum_steps
+  curriculum_step = int(nexamples.numpy()*1.0/args.curriculum_examples)
+  if args.curriculum_vocabs:
+    if curriculum_step >= len(args.curriculum_vocabs):
+      curriculum_step = len(args.curriculum_vocabs)-1
+    rate = args.curriculum_vocabs[curriculum_step]*1.0/VOC_SIZE
+  else:
+    rate = (curriculum_step+1.0)/args.curriculum_steps
   competence.assign(tf.cast(tf.math.minimum(rate, 1.0), tf.float32))
 
   # Train
@@ -244,15 +257,15 @@ while True:
                      unit="batch",
                      ncols=80,
                      total=math.ceil(args.test_size*1.0/args.test_batch_size)):
-      t_expanded = tf.concat([tf.reshape(tf.tile(test[:,:4],[1,VOC_SIZE]),
-                                         [-1, 4]),
+      t_expanded = tf.concat([tf.reshape(tf.tile(test[:,:WINDOW_SIZE-1],[1,VOC_SIZE]),
+                                         [-1, WINDOW_SIZE-1]),
                               tf.reshape(tf.tile(vocabs,[test.shape[0]]),
                                          [-1, 1])],
                              axis=1)
       out = model.predict(t_expanded)
       out = tf.reshape(out, [-1, VOC_SIZE])
       for ib in range(test.shape[0]):
-        w = test[ib][4]-1
+        w = test[ib][WINDOW_SIZE-1]-1
         windows_s = "["+" ".join([vocab[t-1] for t in test[ib][:-1]])+ "]..."+vocab[w]
         out_w = out[ib][w]
         sorted_out = tf.sort(tf.reshape(out[ib],[VOC_SIZE]), direction='DESCENDING')
